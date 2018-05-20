@@ -1,42 +1,132 @@
-/*
-  Blink
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
 
-  Turns an LED on for one second, then off for one second, repeatedly.
+const char* ssid = "Kopernika32";
+const char* password = "zosienka";
 
-  Most Arduinos have an on-board LED you can control. On the UNO, MEGA and ZERO
-  it is attached to digital pin 13, on MKR1000 on pin 6. LED_BUILTIN is set to
-  the correct LED pin independent of which board is used.
-  If you want to know what pin the on-board LED is connected to on your Arduino
-  model, check the Technical Specs of your board at:
-  https://www.arduino.cc/en/Main/Products
+ESP8266WebServer server(80);
 
-  modified 8 May 2014
-  by Scott Fitzgerald
-  modified 2 Sep 2016
-  by Arturo Guadalupi
-  modified 8 Sep 2016
-  by Colby Newman
+const int led = 13;
 
-  This example code is in the public domain.
-
-  http://www.arduino.cc/en/Tutorial/Blink
-*/
-
-#include <Arduino.h>
-
-#define ESP_LED 2
-
-// the setup function runs once when you press reset or power the board
-void setup() {
-  // initialize digital pin LED_BUILTIN as an output.
-  pinMode(ESP_LED, OUTPUT);
+void handleRoot()
+{
+    digitalWrite(led, 1);
+    server.send(200, "text/plain", "hello from esp8266!");
+    digitalWrite(led, 0);
 }
 
-// the loop function runs over and over again forever
-void loop() {
-  digitalWrite(ESP_LED, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(1000);                       // wait for a second
-  digitalWrite(ESP_LED, LOW);    // turn the LED off by making the voltage LOW
-  delay(1000);                       // wait for a second
+void rpcResponse(char * response)
+{
+    Serial.println(response);
+    server.send(200, "text/plain", response);
 }
 
+void rpcPinMode(int pin, int value)
+{
+    char response[128];
+    pinMode(pin, value);
+    sprintf(response, "pinMode(%d, %s)\n", pin, (value == INPUT) ? "INPUT" : "OUTPUT");
+    rpcResponse(response);
+}
+
+void rpcDigitalRead(int pin)
+{
+    char response[128];
+    int value = digitalRead(pin);
+    sprintf(response, "digitalRead(%d): %s\n", pin, (value == LOW) ? "LOW" : "HIGH");
+    rpcResponse(response);
+}
+
+void rpcDigitalWrite(int pin, int value)
+{
+    char response[128];
+    digitalWrite(pin, value);
+    sprintf(response, "digitalWrite(%d, %s)\n", pin, (value == LOW) ? "LOW" : "HIGH");
+    rpcResponse(response);
+}
+
+void handleNotFound()
+{
+    digitalWrite(led, 1);
+    String message = "File Not Found\n\n";
+    message += "URI: ";
+    message += server.uri();
+    message += "\nMethod: ";
+    message += (server.method() == HTTP_GET) ? "GET" : "POST";
+    message += "\nArguments: ";
+    message += server.args();
+    message += "\n";
+    for (uint8_t i = 0; i < server.args(); i++)
+    {
+        message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+    }
+    server.send(404, "text/plain", message);
+    digitalWrite(led, 0);
+}
+
+void setup(void)
+{
+    pinMode(led, OUTPUT);
+    digitalWrite(led, 0);
+    Serial.begin(115200);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    Serial.println("");
+
+    // Wait for connection
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("");
+    Serial.print("Connected to ");
+    Serial.println(ssid);
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+
+    if (MDNS.begin("esp8266"))
+    {
+        Serial.println("MDNS responder started");
+    }
+
+    server.on("/", handleRoot);
+
+    char url[128];
+    for(int pin : {1, 2, 3, 4})
+    {
+        sprintf(url, "/api/pinMode/%d/INPUT", pin);
+        server.on(url, [pin](){
+            rpcPinMode(pin, INPUT);
+        });
+        sprintf(url, "/api/pinMode/%d/OUTPUT", pin);
+        server.on(url, [pin](){
+            rpcPinMode(pin, OUTPUT);
+        });
+        sprintf(url, "/api/digitalRead/%d", pin);
+        server.on(url, [pin](){
+            rpcDigitalRead(pin);
+        });
+        sprintf(url, "/api/digitalWrite/%d/LOW", pin);
+        server.on(url, [pin](){
+            rpcDigitalWrite(pin, LOW);
+        });
+        sprintf(url, "/api/digitalWrite/%d/HIGH", pin);
+        server.on(url, [pin](){
+            rpcDigitalWrite(pin, HIGH);
+        });
+    }
+
+    server.onNotFound(handleNotFound);
+
+    server.begin();
+    Serial.println("HTTP server started");
+    digitalWrite(led, HIGH);
+}
+
+void loop(void)
+{
+    server.handleClient();
+}
